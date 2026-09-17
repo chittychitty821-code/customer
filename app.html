@@ -41,6 +41,13 @@
           </button>
         </li>
         <li>
+          <button type="button" class="sidebar-item-btn" id="btn-nav-tickets" onclick="switchAppView('tickets')">
+            <i class="fa-solid fa-ticket"></i>
+            <span>Escalation &amp; Tickets</span>
+            <span class="sidebar-badge-count" id="sidebar-ticket-count">2</span>
+          </button>
+        </li>
+        <li>
           <button type="button" class="sidebar-item-btn" id="btn-nav-analytics" onclick="switchAppView('analytics')">
             <i class="fa-solid fa-chart-pie"></i>
             <span>Deflection &amp; Analytics</span>
@@ -213,9 +220,14 @@
                 Browse, search, and verify indexed store policy segments stored inside ChromaDB.
               </p>
             </div>
-            <button type="button" class="btn btn-primary" onclick="openAddPolicyModal()">
-              <i class="fa-solid fa-plus"></i> Ingest New Policy Clause
-            </button>
+            <div class="kb-header-actions">
+              <button type="button" class="btn btn-secondary" onclick="handleResetKb()" title="Reset to default company policies">
+                <i class="fa-solid fa-arrows-rotate"></i> Reset Default KB
+              </button>
+              <button type="button" class="btn btn-primary" onclick="openAddPolicyModal()">
+                <i class="fa-solid fa-plus"></i> Ingest New Policy Clause
+              </button>
+            </div>
           </div>
 
           <div class="kb-search-bar">
@@ -231,7 +243,100 @@
       </div>
 
       <!-- =========================================================================
-           VIEW 3: DEFLECTION & ANALYTICS DASHBOARD
+           VIEW 3: ESCALATION & TICKETS INBOX
+           ========================================================================= -->
+      <div class="app-view-container" id="view-tickets">
+        <div class="dashboard-grid-container">
+          <div class="view-header-flex">
+            <div>
+              <h2 class="view-header-title">Escalation &amp; Support Tickets Inbox</h2>
+              <p class="view-header-subtitle">
+                Manage, assign, and resolve deflected customer inquiries requiring human agent intervention.
+              </p>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="openCreateTicketModal()">
+              <i class="fa-solid fa-plus"></i> Create New Ticket
+            </button>
+          </div>
+
+          <!-- Ticket KPIs Row -->
+          <div class="metrics-summary-row">
+            <div class="kpi-card">
+              <div class="kpi-info">
+                <h5>Open Tickets</h5>
+                <div class="kpi-num text-amber" id="ticket-kpi-open">2</div>
+                <div class="kpi-delta pos"><i class="fa-solid fa-clock"></i> Requires response</div>
+              </div>
+              <div class="feature-icon-wrap feature-icon-kpi">
+                <i class="fa-solid fa-inbox"></i>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-info">
+                <h5>In Progress</h5>
+                <div class="kpi-num text-cyan" id="ticket-kpi-in-progress">1</div>
+                <div class="kpi-delta pos"><i class="fa-solid fa-user-check"></i> Agent assigned</div>
+              </div>
+              <div class="feature-icon-wrap feature-icon-kpi feature-icon-cyan">
+                <i class="fa-solid fa-spinner"></i>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-info">
+                <h5>Resolved Tickets</h5>
+                <div class="kpi-num text-emerald" id="ticket-kpi-resolved">1</div>
+                <div class="kpi-delta pos"><i class="fa-solid fa-circle-check"></i> Closed successfully</div>
+              </div>
+              <div class="feature-icon-wrap feature-icon-kpi feature-icon-emerald">
+                <i class="fa-solid fa-clipboard-check"></i>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-info">
+                <h5>Resolution Rate</h5>
+                <div class="kpi-num" id="ticket-kpi-rate">98.2%</div>
+                <div class="kpi-delta pos"><i class="fa-solid fa-bolt"></i> &lt; 2hr SLA average</div>
+              </div>
+              <div class="feature-icon-wrap feature-icon-kpi feature-icon-purple">
+                <i class="fa-solid fa-gauge"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filters Row -->
+          <div class="tickets-filter-row">
+            <div class="ticket-filter-tabs">
+              <button type="button" class="ticket-tab-btn active" id="tab-ticket-all" onclick="filterTicketsList('all')">
+                <i class="fa-solid fa-layer-group"></i> All Tickets
+              </button>
+              <button type="button" class="ticket-tab-btn" id="tab-ticket-open" onclick="filterTicketsList('Open')">
+                <i class="fa-solid fa-envelope-open"></i> Open
+              </button>
+              <button type="button" class="ticket-tab-btn" id="tab-ticket-progress" onclick="filterTicketsList('In Progress')">
+                <i class="fa-solid fa-arrows-rotate"></i> In Progress
+              </button>
+              <button type="button" class="ticket-tab-btn" id="tab-ticket-resolved" onclick="filterTicketsList('Resolved')">
+                <i class="fa-solid fa-check"></i> Resolved
+              </button>
+            </div>
+
+            <button type="button" class="btn btn-secondary btn-sm" onclick="fetchTicketsFromBackend(true)">
+              <i class="fa-solid fa-rotate"></i> Refresh Inbox
+            </button>
+          </div>
+
+          <!-- Tickets Grid -->
+          <div class="tickets-grid" id="tickets-list-container">
+            <!-- Dynamically populated by app.js -->
+          </div>
+        </div>
+      </div>
+
+      <!-- =========================================================================
+           VIEW 4: DEFLECTION & ANALYTICS DASHBOARD
            ========================================================================= -->
       <div class="app-view-container" id="view-analytics">
         <div class="dashboard-grid-container">
@@ -384,12 +489,12 @@
           <div class="chart-card">
             <div class="chart-card-header">
               <h4>Recent Inquiries &amp; Citation Audit Log</h4>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="showToast('Audit stream refreshed', 'info')">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="fetchAnalyticsFromBackend(true)">
                 <i class="fa-solid fa-arrows-rotate"></i> Refresh
               </button>
             </div>
 
-            <div class="audit-list">
+            <div class="audit-list" id="audit-list-container">
               <div class="audit-row">
                 <div>
                   <strong>&quot;Can I return open-box headphones?&quot;</strong>
@@ -419,7 +524,7 @@
       </div>
 
       <!-- =========================================================================
-           VIEW 4: PIPELINE SETTINGS
+           VIEW 5: PIPELINE SETTINGS
            ========================================================================= -->
       <div class="app-view-container" id="view-settings">
         <div class="settings-container">
@@ -442,6 +547,16 @@
                 </button>
               </div>
               <div class="form-help">Default local endpoint for <code>server.py</code>. Cross-Origin Resource Sharing (CORS) is enabled.</div>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <h4 class="settings-section-title"><i class="fa-solid fa-lock icon-purple"></i> Admin Security &amp; Authorization</h4>
+
+            <div class="form-group">
+              <label class="form-label" for="setting-admin-key">Admin API Key (X-API-Key)</label>
+              <input type="password" id="setting-admin-key" class="form-control" placeholder="Enter ADMIN_API_KEY if server authentication is enabled" autocomplete="current-password">
+              <div class="form-help">Required for vector indexing, deleting policy clauses, and updating pipeline parameters when backend auth is active.</div>
             </div>
           </div>
 
@@ -510,6 +625,53 @@
         </div>
         <button type="submit" class="btn btn-primary btn-w-full">
           <i class="fa-solid fa-vector-square"></i> Ingest &amp; Index Chunk
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Create Support Ticket Modal -->
+  <div class="modal-overlay" id="create-ticket-modal">
+    <div class="modal-card">
+      <button type="button" class="modal-close" onclick="closeCreateTicketModal()" title="Close dialog" aria-label="Close dialog">&times;</button>
+      <div class="modal-header-box">
+        <div class="brand-icon-box brand-icon-sm">
+          <i class="fa-solid fa-headset"></i>
+        </div>
+        <h3 class="brand-icon-sm">Escalate to Human Support</h3>
+      </div>
+      <p class="modal-desc">
+        Create an escalated customer support ticket for our tier-2 specialized team.
+      </p>
+
+      <form id="create-ticket-form" onsubmit="handleCreateTicketSubmit(event)">
+        <div class="form-group">
+          <label class="form-label" for="ticket-customer-name">Customer Name</label>
+          <input type="text" id="ticket-customer-name" class="form-control" placeholder="e.g. Alex Morgan" required autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ticket-customer-email">Email Address</label>
+          <input type="email" id="ticket-customer-email" class="form-control" placeholder="e.g. alex@example.com" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ticket-priority">Priority Level</label>
+          <select id="ticket-priority" class="form-control">
+            <option value="Medium">Medium Priority (Standard SLA 24h)</option>
+            <option value="High">High Priority (SLA 4h)</option>
+            <option value="Urgent">Urgent Priority (Critical Escalation SLA 1h)</option>
+            <option value="Low">Low Priority (General Feedback)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ticket-subject">Subject</label>
+          <input type="text" id="ticket-subject" class="form-control" placeholder="Brief summary of inquiry..." required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ticket-details">Inquiry &amp; Context Details</label>
+          <textarea id="ticket-details" class="form-control" rows="4" placeholder="Detailed customer query..." required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-w-full">
+          <i class="fa-solid fa-paper-plane"></i> Submit Escalation Ticket
         </button>
       </form>
     </div>

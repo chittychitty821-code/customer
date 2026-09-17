@@ -209,75 +209,116 @@ async function handleDemoSubmit() {
   input.value = '';
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
-  // Add Loading Bubble
-  const loadingBubble = document.createElement('div');
-  loadingBubble.className = 'chat-bubble bot';
-  loadingBubble.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking verified store policies in ChromaDB...`;
-  chatMessages.appendChild(loadingBubble);
+  // Add Bot Bubble with streaming cursor
+  const botBubble = document.createElement('div');
+  botBubble.className = 'chat-bubble bot';
+  botBubble.innerHTML = `<span class="typing-cursor"></span>`;
+  chatMessages.appendChild(botBubble);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 
-  // Try live backend first
-  let answered = false;
+  let streamSuccess = false;
+  let accumulated = '';
+  let sources = [];
+
+  // Try live backend streaming
   try {
-    const res = await fetch('http://localhost:8000/ask', {
+    const res = await fetch('http://localhost:8000/ask/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: userText }),
-      signal: AbortSignal.timeout(3000)
+      signal: AbortSignal.timeout(6000)
     });
 
     if (res.ok) {
-      const data = await res.json();
-      renderBotDemoResponse(loadingBubble, data.answer, data.sources && data.sources.length > 0 ? data.sources[0] : null);
-      answered = true;
-    }
-  } catch (err) {
-    // Backend offline or timeout -> proceed to smart grounded fallback
-  }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
 
-  if (!answered) {
-    setTimeout(() => {
-      let matched = null;
-      const lowerQuery = userText.toLowerCase();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
 
-      for (const item of demoKnowledgeFallback) {
-        if (item.keywords.some(k => lowerQuery.includes(k))) {
-          matched = item;
-          break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop();
+
+        for (const raw of events) {
+          if (!raw.trim()) continue;
+          let eventType = '';
+          let dataStr = '';
+          for (const line of raw.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.replace('event: ', '').trim();
+            if (line.startsWith('data: ')) dataStr = line.replace('data: ', '').trim();
+          }
+
+          if (dataStr) {
+            try {
+              const data = JSON.parse(dataStr);
+              if (eventType === 'sources') {
+                sources = data.sources || [];
+              } else if (eventType === 'token') {
+                accumulated += data.token;
+                botBubble.innerHTML = `<div>${accumulated}</div><span class="typing-cursor"></span>`;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+              }
+            } catch (e) {}
+          }
         }
       }
-
-      if (matched) {
-        renderBotDemoResponse(loadingBubble, matched.answer, matched.source);
-      } else {
-        renderBotDemoResponse(
-          loadingBubble,
-          "I am sorry, but our verified documentation does not cover that specific inquiry. Please contact our human support team at support@company.com.",
-          null
-        );
-      }
-    }, 450);
+      streamSuccess = accumulated.length > 0;
+    }
+  } catch (err) {
+    // Fall back to local simulator
   }
-}
 
-function renderBotDemoResponse(bubbleEl, answerText, source) {
+  if (!streamSuccess) {
+    let matched = null;
+    const lowerQuery = userText.toLowerCase();
+
+    for (const item of demoKnowledgeFallback) {
+      if (item.keywords.some(k => lowerQuery.includes(k))) {
+        matched = item;
+        break;
+      }
+    }
+
+    const fullAnswer = matched 
+      ? matched.answer 
+      : "I am sorry, but our verified documentation does not cover that specific inquiry. Please contact our human support team at support@company.com.";
+    const sourceTag = matched ? matched.source : null;
+
+    // Simulate real-time streaming
+    accumulated = '';
+    const words = fullAnswer.split(' ');
+    for (let i = 0; i < words.length; i++) {
+      accumulated += (i === 0 ? '' : ' ') + words[i];
+      botBubble.innerHTML = `<div>${accumulated}</div><span class="typing-cursor"></span>`;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      await new Promise(r => setTimeout(r, 22));
+    }
+
+    if (sourceTag) {
+      sources = [sourceTag];
+    }
+  }
+
+  // Finalize bot bubble
   let sourceHtml = '';
-  if (source) {
+  if (sources && sources.length > 0) {
+    const srcText = sources[0];
     sourceHtml = `
-      <div class="verified-source-tag">
+      <div class="verified-source-tag" style="margin-top: 6px;">
         <i class="fa-solid fa-shield-check"></i>
-        <span><strong>Verified Source:</strong> ${source.length > 90 ? source.substring(0, 90) + '...' : source}</span>
+        <span><strong>Verified Source:</strong> ${srcText.length > 90 ? srcText.substring(0, 90) + '...' : srcText}</span>
       </div>
     `;
   }
 
-  bubbleEl.innerHTML = `
-    <div>${answerText}</div>
+  botBubble.innerHTML = `
+    <div>${accumulated}</div>
     ${sourceHtml}
   `;
-
-  const chatMessages = document.getElementById('demo-chat-messages');
-  if (chatMessages) chatMessages.scrollTop = chatMessages.scrollHeight;
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 // 7. Modal Control
