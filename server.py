@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi.responses import StreamingResponse, JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -1000,7 +1000,21 @@ def get_analytics():
         "audit_logs": AUDIT_LOGS[:10]
     }
 
-# Mount static files if available
+@app.get("/")
+def read_root():
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    elif os.path.exists("app.html"):
+        return FileResponse("app.html")
+    return {"status": "online", "message": "OmniDesk Customer Support RAG Agent API is live. Visit /health or /docs."}
+
+# Mount static asset folders
+if os.path.exists("css"):
+    app.mount("/css", StaticFiles(directory="css"), name="css")
+if os.path.exists("js"):
+    app.mount("/js", StaticFiles(directory="js"), name="js")
+
+# Mount root static files if available
 if os.path.exists("."):
     try:
         app.mount("/static", StaticFiles(directory=".", html=True), name="static")
@@ -1010,5 +1024,5 @@ if os.path.exists("."):
 if __name__ == "__main__":
     import uvicorn
     host = os.getenv("BACKEND_HOST", "0.0.0.0")
-    port = int(os.getenv("BACKEND_PORT", "8000"))
+    port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", "8000")))
     uvicorn.run(app, host=host, port=port)

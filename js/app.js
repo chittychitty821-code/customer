@@ -6,7 +6,7 @@
 // Global Application State
 const AppState = {
   currentView: 'chat',
-  backendUrl: localStorage.getItem('omni_backend_url') || 'http://localhost:8000',
+  backendUrl: localStorage.getItem('omni_backend_url') || (window.location.origin.startsWith('http') && !window.location.port.match(/^(5500|3000|5173)$/) ? window.location.origin : 'http://localhost:8000'),
   adminApiKey: localStorage.getItem('omni_admin_key') || '',
   guardrailThreshold: parseFloat(localStorage.getItem('omni_threshold')) || 1.2,
   model: localStorage.getItem('omni_model') || 'gemini-3.6-flash',
