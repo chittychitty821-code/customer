@@ -1,7 +1,13 @@
+import os
 import streamlit as st
 import requests
 import json
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
+if os.path.exists("doc/.env"):
+    load_dotenv("doc/.env")
 
 st.set_page_config(
     page_title="OmniDesk AI — Enterprise Support Hub",
@@ -89,7 +95,8 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("⚙️ System Connection")
-    backend_url = st.text_input("Backend API URL", value="http://127.0.0.1:8000")
+    default_backend = os.getenv("RAILWAY_URL") or os.getenv("BACKEND_URL") or "http://127.0.0.1:8000"
+    backend_url = st.text_input("Backend API URL", value=default_backend, help="Enter your Railway backend URL (e.g. https://your-app.up.railway.app) or localhost:8000")
     admin_key = st.text_input("Admin API Key", value=st.session_state.admin_api_key, type="password", help="Required for protected KB mutations and settings sync.")
     st.session_state.admin_api_key = admin_key
 
@@ -97,7 +104,7 @@ with st.sidebar:
     is_online = False
     health_info = {}
     try:
-        r = requests.get(f"{backend_url}/health", timeout=2)
+        r = requests.get(f"{backend_url.rstrip('/')}/health", timeout=3)
         if r.status_code == 200:
             is_online = True
             health_info = r.json()
@@ -105,7 +112,7 @@ with st.sidebar:
         else:
             st.warning(f"🟠 API Warning: {r.status_code}")
     except Exception:
-        st.error("🔴 Backend Offline\nStart with `python server.py`")
+        st.error("🔴 Backend Offline\nEnter your live Railway URL or start local server.")
 
     st.markdown("---")
     st.subheader("🎛️ Pipeline Settings")
