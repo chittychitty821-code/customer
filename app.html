@@ -94,6 +94,19 @@
         </div>
 
         <div class="topbar-actions">
+          <div class="lang-select-wrapper" title="Multi-Language Support Localization">
+            <i class="fa-solid fa-globe"></i>
+            <select id="app-language-select" class="lang-select" title="Select Target Language Localization" aria-label="Select Target Language Localization" onchange="handleLanguageChange(this.value)">
+              <option value="Auto Detect">🌐 Auto Detect</option>
+              <option value="English">🇺🇸 English</option>
+              <option value="Spanish">🇪🇸 Español</option>
+              <option value="French">🇫🇷 Français</option>
+              <option value="German">🇩🇪 Deutsch</option>
+              <option value="Japanese">🇯🇵 日本語</option>
+              <option value="Portuguese">🇧🇷 Português</option>
+              <option value="Hindi">🇮🇳 हिन्दी</option>
+            </select>
+          </div>
           <button type="button" class="btn btn-secondary btn-sm" onclick="exportChatTranscript()" id="btn-export-chat" title="Export transcript as JSON">
             <i class="fa-solid fa-download"></i> Export Chat
           </button>
@@ -221,6 +234,9 @@
               </p>
             </div>
             <div class="kb-header-actions">
+              <button type="button" class="btn btn-secondary" onclick="exportKnowledgeBaseBackup()" title="Download JSON vector backup">
+                <i class="fa-solid fa-download"></i> Export Backup
+              </button>
               <button type="button" class="btn btn-secondary" onclick="handleResetKb()" title="Reset to default company policies">
                 <i class="fa-solid fa-arrows-rotate"></i> Reset Default KB
               </button>
@@ -306,7 +322,7 @@
             </div>
           </div>
 
-          <!-- Filters Row -->
+          <!-- Filters & Fast Search Row -->
           <div class="tickets-filter-row">
             <div class="ticket-filter-tabs">
               <button type="button" class="ticket-tab-btn active" id="tab-ticket-all" onclick="filterTicketsList('all')">
@@ -323,8 +339,19 @@
               </button>
             </div>
 
-            <button type="button" class="btn btn-secondary btn-sm" onclick="fetchTicketsFromBackend(true)">
-              <i class="fa-solid fa-rotate"></i> Refresh Inbox
+            <div class="kb-search-bar search-bar-compact">
+              <i class="fa-solid fa-magnifying-glass kb-search-icon"></i>
+              <input type="text" id="tickets-search-input" class="kb-search-input" placeholder="Search Customer ID, Name, Email..." oninput="handleSearchTickets()">
+            </div>
+
+            <button type="button" class="btn btn-secondary btn-sm" onclick="exportTicketsData('csv')" title="Download CSV for CRM/Excel">
+              <i class="fa-solid fa-file-csv"></i> Export CSV
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="exportTicketsData('json')" title="Download JSON dataset">
+              <i class="fa-solid fa-file-code"></i> JSON
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="fetchTicketsFromBackend(true)" title="Refresh tickets" aria-label="Refresh tickets">
+              <i class="fa-solid fa-rotate"></i> Refresh
             </button>
           </div>
 
@@ -518,6 +545,76 @@
                 </div>
                 <span class="badge badge-emerald chart-badge">Resolved (1-Year Limited Cited)</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Phase 7: Autonomous Synthetic Benchmark Studio -->
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h4><i class="fa-solid fa-microchip icon-cyan"></i> Autonomous Synthetic Benchmark &amp; Stress Test Studio</h4>
+                <div class="text-dim text-xs mt-1">Multi-scenario load test evaluating throughput (QPS), latency percentiles, and guardrail precision.</div>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-run-benchmark" onclick="handleRunSyntheticBenchmark()">
+                <i class="fa-solid fa-play"></i> Run Synthetic Benchmark
+              </button>
+            </div>
+
+            <div class="bench-metrics-grid" id="bench-metrics-grid">
+              <div class="bench-metric-card">
+                <div class="bench-metric-num" id="bench-qps">18.4 QPS</div>
+                <div class="bench-metric-lbl">Throughput (Queries/sec)</div>
+              </div>
+              <div class="bench-metric-card">
+                <div class="bench-metric-num text-emerald" id="bench-p50">48ms</div>
+                <div class="bench-metric-lbl">P50 Response Latency</div>
+              </div>
+              <div class="bench-metric-card">
+                <div class="bench-metric-num text-purple" id="bench-precision">100.0%</div>
+                <div class="bench-metric-lbl">Guardrail Accuracy</div>
+              </div>
+              <div class="bench-metric-card">
+                <div class="bench-metric-num text-amber" id="bench-intent-acc">100.0%</div>
+                <div class="bench-metric-lbl">Intent Classification</div>
+              </div>
+            </div>
+
+            <div id="bench-results-container" class="mt-4 display-none">
+              <h5 class="text-xs text-muted uppercase font-bold tracking-wider mb-2">Battery Test Executions (8 Scenarios)</h5>
+              <div class="table-responsive">
+                <table class="bench-results-table">
+                  <thead>
+                    <tr>
+                      <th>Scenario Query</th>
+                      <th>Lang</th>
+                      <th>Intent</th>
+                      <th>Latency</th>
+                      <th>Guardrail</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="bench-results-tbody">
+                    <!-- Populated dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Phase 7: Outbound Incident Webhooks Feed -->
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <div>
+                <h4><i class="fa-solid fa-bell icon-amber"></i> Outbound Incident Webhooks &amp; Alert Stream</h4>
+                <div class="text-dim text-xs mt-1">Automated dispatch to Slack, PagerDuty, and SIEM on SLA risk thresholds and low CSAT scores.</div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-test-webhook" onclick="handleTriggerTestWebhook()">
+                <i class="fa-solid fa-paper-plane"></i> Test Alert Webhook
+              </button>
+            </div>
+
+            <div id="webhook-logs-container">
+              <!-- Populated dynamically -->
             </div>
           </div>
         </div>

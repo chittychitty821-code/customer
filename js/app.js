@@ -14,6 +14,8 @@ const AppState = {
   isBackendOnline: false,
   isStreaming: false,
   activeTicketFilter: 'all',
+  openCopilotDrawers: new Set(),
+  selectedLanguage: localStorage.getItem('omni_language') || 'Auto Detect',
   messages: [
     {
       role: 'assistant',
@@ -299,12 +301,14 @@ async function handleSendChat() {
   let latencyMs = 0;
   let modelUsed = AppState.model;
 
+  let appliedLanguage = AppState.selectedLanguage || 'English';
+
   if (AppState.isBackendOnline) {
     try {
       const response = await fetch(`${AppState.backendUrl}/ask/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query })
+        body: JSON.stringify({ query: query, language: AppState.selectedLanguage })
       });
 
       if (response.status === 429) {
@@ -350,6 +354,7 @@ async function handleSendChat() {
               if (eventType === 'sources') {
                 retrievedSources = data.sources || [];
                 isDeflected = !!data.deflected;
+                if (data.language) appliedLanguage = data.language;
               } else if (eventType === 'token') {
                 accumulatedText += data.token;
                 updateStreamingMessage(bubbleEl, accumulatedText);
@@ -358,6 +363,7 @@ async function handleSendChat() {
                 latencyMs = data.latency_ms || 0;
                 modelUsed = data.model || modelUsed;
                 isDeflected = !!data.deflected;
+                if (data.language) appliedLanguage = data.language;
               }
             } catch (err) {
               console.warn('SSE Parse error:', err);
@@ -382,13 +388,14 @@ async function handleSendChat() {
     });
   }
 
-  // Finalize assistant message
-  finalizeAssistantMessage(bubbleEl, actionsEl, accumulatedText, retrievedSources, latencyMs, isDeflected, query);
+  // Finalize assistant message with multi-language and CSAT
+  finalizeAssistantMessage(bubbleEl, actionsEl, accumulatedText, retrievedSources, latencyMs, isDeflected, query, appliedLanguage);
   AppState.messages.push({
     role: 'assistant',
     content: accumulatedText,
     sources: retrievedSources,
-    latency: latencyMs
+    latency: latencyMs,
+    language: appliedLanguage
   });
 
   AppState.isStreaming = false;
@@ -441,12 +448,6 @@ function createAssistantPlaceholder(container, rowId, bubbleId, actionsId) {
         <button type="button" class="msg-btn-action" onclick="speakMessageText(this)">
           <i class="fa-solid fa-volume-high"></i> Read Aloud
         </button>
-        <button type="button" class="msg-btn-action" onclick="rateMessage(this, 'helpful')">
-          <i class="fa-solid fa-thumbs-up"></i> Helpful
-        </button>
-        <button type="button" class="msg-btn-action" onclick="rateMessage(this, 'unhelpful')">
-          <i class="fa-solid fa-thumbs-down"></i>
-        </button>
       </div>
     </div>
   `;
@@ -458,7 +459,7 @@ function updateStreamingMessage(bubbleEl, text) {
   bubbleEl.innerHTML = formatMarkdownText(text) + '<span class="typing-cursor"></span>';
 }
 
-function finalizeAssistantMessage(bubbleEl, actionsEl, text, sources, latencyMs, isDeflected, originalQuery = '') {
+function finalizeAssistantMessage(bubbleEl, actionsEl, text, sources, latencyMs, isDeflected, originalQuery = '', appliedLanguage = 'English') {
   if (!bubbleEl) return;
 
   let sourcesHtml = '';
@@ -492,22 +493,42 @@ function finalizeAssistantMessage(bubbleEl, actionsEl, text, sources, latencyMs,
     `;
   }
 
-  let latencyBadge = '';
+  let badgeRowHtml = '';
+  const badges = [];
+  if (appliedLanguage && appliedLanguage !== 'English') {
+    badges.push(`<span class="lang-badge"><i class="fa-solid fa-language"></i> ${appliedLanguage}</span>`);
+  }
   if (latencyMs > 0) {
-    latencyBadge = `
-      <span class="latency-pill ${isDeflected ? 'deflected' : ''}">
-        <i class="fa-solid fa-bolt"></i> ${latencyMs}ms
-      </span>
-    `;
+    badges.push(`<span class="latency-pill ${isDeflected ? 'deflected' : ''}"><i class="fa-solid fa-bolt"></i> ${latencyMs}ms</span>`);
+  }
+  if (badges.length > 0) {
+    badgeRowHtml = `<div style="display: flex; gap: 0.35rem; align-items: center;">${badges.join('')}</div>`;
   }
 
+  // CSAT rating container
+  const safeOriginalQ = escapeHtml(originalQuery || text).replace(/'/g, "\\'");
+  const csatHtml = `
+    <div class="csat-container">
+      <span>Was this answer helpful?</span>
+      <div class="csat-btn-group">
+        <button type="button" class="csat-btn thumb-up" onclick="handleRateAssistantResponse(this, true, 5, '${safeOriginalQ}')" title="Helpful answer">
+          <i class="fa-solid fa-thumbs-up"></i> Helpful
+        </button>
+        <button type="button" class="csat-btn thumb-down" onclick="handleRateAssistantResponse(this, false, 1, '${safeOriginalQ}')" title="Needs improvement">
+          <i class="fa-solid fa-thumbs-down"></i> Needs Work
+        </button>
+      </div>
+    </div>
+  `;
+
   bubbleEl.innerHTML = `
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 0.5rem;">
       <div style="flex: 1;">${formatMarkdownText(text)}</div>
-      ${latencyBadge}
+      ${badgeRowHtml}
     </div>
     ${escalationButtonHtml}
     ${sourcesHtml}
+    ${csatHtml}
   `;
 
   if (actionsEl) {
@@ -776,6 +797,21 @@ async function handleResetKb() {
   showToast('Reset completed', 'info');
 }
 
+function exportKnowledgeBaseBackup() {
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+    export_date: new Date().toISOString(),
+    total_chunks: AppState.knowledgeChunks.length,
+    chunks: AppState.knowledgeChunks
+  }, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute("href", dataStr);
+  downloadAnchor.setAttribute("download", "omnidesk_kb_backup.json");
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+  showToast('Knowledge base backup downloaded!', 'success');
+}
+
 // ==============================================================================
 // 5. ESCALATION & TICKETS MANAGEMENT
 // ==============================================================================
@@ -815,26 +851,95 @@ async function fetchTicketsFromBackend(showNotification = false) {
   renderTicketsList();
 }
 
-function renderTicketsList() {
+function getCustomerInitials(name) {
+  if (!name) return 'CU';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.substring(0, 2).toUpperCase();
+}
+
+function renderTicketsList(searchQuery = '') {
   const container = document.getElementById('tickets-list-container');
   if (!container) return;
 
+  const searchInput = document.getElementById('tickets-search-input');
+  const term = (searchQuery || (searchInput ? searchInput.value : '')).toLowerCase().trim();
+
   const filtered = AppState.tickets.filter(t => {
-    if (AppState.activeTicketFilter === 'all') return true;
-    return t.status.toLowerCase() === AppState.activeTicketFilter.toLowerCase();
+    // Status tab filter
+    const matchesStatus = AppState.activeTicketFilter === 'all' || 
+      t.status.toLowerCase() === AppState.activeTicketFilter.toLowerCase();
+    
+    if (!matchesStatus) return false;
+
+    // Search query filter
+    if (!term) return true;
+
+    const custId = (t.customer_id || '').toLowerCase();
+    const custName = (t.customer_name || '').toLowerCase();
+    const custEmail = (t.customer_email || '').toLowerCase();
+    const tckId = (t.id || '').toLowerCase();
+    const subject = (t.subject || '').toLowerCase();
+    const query = (t.query || '').toLowerCase();
+    const agent = (t.assigned_agent || '').toLowerCase();
+
+    return custId.includes(term) || custName.includes(term) || custEmail.includes(term) ||
+           tckId.includes(term) || subject.includes(term) || query.includes(term) || agent.includes(term);
   });
 
   if (filtered.length === 0) {
-    container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 3rem;">No tickets found matching "${AppState.activeTicketFilter}".</div>`;
+    container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 3rem;">No tickets found matching your criteria.</div>`;
     return;
   }
+
+  const agentsList = [
+    { name: 'Unassigned', label: 'Unassigned' },
+    { name: 'Alex Morgan', label: 'Alex Morgan (Tier 2 Lead)' },
+    { name: 'Sarah Chen', label: 'Sarah Chen (Logistics)' },
+    { name: 'David Miller', label: 'David Miller (Billing)' },
+    { name: 'Emma Watson', label: 'Emma Watson (Warranty)' }
+  ];
 
   container.innerHTML = filtered.map(t => {
     const priorityClass = (t.priority || 'medium').toLowerCase();
     const statusClass = (t.status || 'open').toLowerCase().replace(' ', '-');
+    const initials = getCustomerInitials(t.customer_name);
+    const custId = t.customer_id || 'CUST-' + t.id.replace('TCK-', '');
+    const tier = t.customer_tier || 'Standard Retail';
+    const tierClass = tier.toLowerCase().includes('vip') ? 'vip' : (tier.toLowerCase().includes('pro') ? 'pro' : 'standard');
+    
+    const intent = t.intent || 'General Inquiry';
+    const sentiment = t.sentiment || 'Standard';
+    const sentimentClass = sentiment.toLowerCase().includes('urgent') ? 'urgent' : (sentiment.toLowerCase().includes('vip') ? 'vip' : '');
+
+    const agentOptions = agentsList.map(a => `
+      <option value="${a.name}" ${t.assigned_agent === a.name ? 'selected' : ''}>${a.label}</option>
+    `).join('');
 
     return `
       <div class="ticket-card" id="card-${t.id}">
+        <!-- Customer Identity Header -->
+        <div class="ticket-customer-header">
+          <div class="customer-avatar-initials" title="Customer: ${escapeHtml(t.customer_name)}">
+            ${initials}
+          </div>
+          <div class="customer-info-col">
+            <div class="customer-name-row">
+              <span class="customer-name-text">${escapeHtml(t.customer_name)}</span>
+              <span class="customer-id-pill"><i class="fa-solid fa-id-badge"></i> ${custId}</span>
+              <span class="customer-tier-badge ${tierClass}">${tier}</span>
+            </div>
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
+              <a href="mailto:${escapeHtml(t.customer_email)}" style="color: var(--secondary-light); text-decoration: none;">
+                <i class="fa-regular fa-envelope"></i> ${escapeHtml(t.customer_email)}
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ticket Card Meta Header -->
         <div class="ticket-card-header">
           <span class="ticket-id-tag"><i class="fa-solid fa-ticket"></i> ${t.id}</span>
           <div style="display: flex; gap: 0.4rem; align-items: center;">
@@ -843,20 +948,42 @@ function renderTicketsList() {
           </div>
         </div>
 
-        <h4 style="font-size: 1.05rem; line-height: 1.35;">${escapeHtml(t.subject)}</h4>
+        <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-top: 2px;">
+          <span class="intent-pill"><i class="fa-solid fa-tag"></i> ${escapeHtml(intent)}</span>
+          <span class="sentiment-pill ${sentimentClass}">${escapeHtml(sentiment)}</span>
+          <span class="sla-badge ${t.sla_details ? t.sla_details.badge_status : 'normal'}">
+            <i class="fa-solid fa-stopwatch"></i> ${escapeHtml(t.sla_details ? t.sla_details.label : 'SLA Active')}
+          </span>
+        </div>
+
+        <h4 style="font-size: 1.02rem; line-height: 1.35; margin: 0.2rem 0;">${escapeHtml(t.subject)}</h4>
         
-        <div style="font-size: 0.86rem; color: var(--text-muted); background: rgba(0,0,0,0.25); padding: 0.5rem 0.75rem; border-radius: 6px;">
+        <div style="font-size: 0.86rem; color: var(--text-muted); background: rgba(0,0,0,0.25); padding: 0.5rem 0.75rem; border-radius: 6px; line-height: 1.45;">
           ${escapeHtml(t.query)}
         </div>
 
         <div class="ticket-meta-info">
-          <div><i class="fa-solid fa-user" style="margin-right: 4px;"></i> <strong>${escapeHtml(t.customer_name)}</strong> &bull; <code>${escapeHtml(t.customer_email)}</code></div>
-          <div><i class="fa-solid fa-user-shield" style="margin-right: 4px;"></i> Assigned: <strong>${escapeHtml(t.assigned_agent || 'Unassigned')}</strong> &bull; ${t.created_at}</div>
+          <div class="ticket-agent-assign-row">
+            <label for="agent-select-${t.id}" style="color: var(--text-muted); font-size: 0.78rem; display: flex; align-items: center; gap: 4px;">
+              <i class="fa-solid fa-user-shield"></i> Fast Route Agent:
+            </label>
+            <select id="agent-select-${t.id}" class="ticket-agent-select" onchange="handleAssignTicketAgent('${t.id}', this.value)">
+              ${agentOptions}
+            </select>
+          </div>
+          <div style="font-size: 0.76rem; color: var(--text-dim); display: flex; justify-content: space-between;">
+            <span><i class="fa-regular fa-clock"></i> Created: ${t.created_at}</span>
+            <span><i class="fa-solid fa-bolt"></i> Target: ${t.sla_details ? Math.round(t.sla_details.sla_target_minutes / 60) + 'h window' : '< 2h'}</span>
+          </div>
         </div>
 
         <div class="ticket-card-actions">
+          <button type="button" class="btn btn-copilot btn-sm" onclick="toggleCopilotDrawer('${t.id}')">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> AI Copilot
+          </button>
+
           ${t.status !== 'In Progress' && t.status !== 'Resolved' ? `
-            <button type="button" class="btn btn-secondary btn-sm" onclick="handleUpdateTicketStatus('${t.id}', 'In Progress')">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="handleClaimTicket('${t.id}')">
               <i class="fa-solid fa-spinner"></i> Claim &amp; Work
             </button>
           ` : ''}
@@ -875,21 +1002,371 @@ function renderTicketsList() {
             <i class="fa-solid fa-trash"></i>
           </button>
         </div>
+
+        <!-- AI Copilot & Conversation Thread Drawer -->
+        <div id="copilot-drawer-${t.id}" class="ticket-copilot-drawer" style="display: ${AppState.openCopilotDrawers.has(t.id) ? 'flex' : 'none'};">
+          <div class="copilot-section-header">
+            <span><i class="fa-solid fa-robot"></i> OmniDesk AI Grounded Draft Assistant</span>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="handleGenerateCopilotDraft('${t.id}')">
+              <i class="fa-solid fa-sparkles"></i> 💡 Generate Draft
+            </button>
+          </div>
+
+          <!-- Quick Macros Bar -->
+          <div class="macro-pills-row">
+            <span style="font-size: 0.76rem; color: var(--text-muted); font-weight: 600;"><i class="fa-solid fa-bolt"></i> Macros:</span>
+            <button type="button" class="macro-pill-btn" onclick="handleApplyMacroDraft('${t.id}', 'macro_return_rma')" title="Apply 30-Day RMA Return template">
+              📦 30-Day RMA
+            </button>
+            <button type="button" class="macro-pill-btn" onclick="handleApplyMacroDraft('${t.id}', 'macro_warranty_claim')" title="Apply 1-Year Warranty replacement intake">
+              🛡️ 1-Yr Warranty
+            </button>
+            <button type="button" class="macro-pill-btn" onclick="handleApplyMacroDraft('${t.id}', 'macro_price_match')" title="Apply 14-Day Price Match adjustment">
+              💳 Price Match
+            </button>
+            <button type="button" class="macro-pill-btn" onclick="handleApplyMacroDraft('${t.id}', 'macro_intl_ddp')" title="Apply DHL International DDP details">
+              ✈️ DHL DDP
+            </button>
+          </div>
+
+          <textarea id="copilot-draft-${t.id}" class="copilot-draft-textarea" rows="4" placeholder="Click 'Generate Draft' or select a Macro above to auto-fill verified policy resolution..."></textarea>
+          <div class="copilot-actions-row">
+            <button type="button" class="btn btn-primary btn-sm" onclick="handleSendCopilotDraft('${t.id}')">
+              <i class="fa-solid fa-paper-plane"></i> Send Reply to Customer
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="handleCopyCopilotDraft('${t.id}')">
+              <i class="fa-regular fa-copy"></i> Copy Draft
+            </button>
+          </div>
+
+          <!-- Thread & Staff Notes Box -->
+          <div class="ticket-thread-box">
+            <div class="thread-title">
+              <i class="fa-solid fa-comments"></i> Conversation Thread &amp; Audit Trail (${(t.messages || []).length})
+            </div>
+            <div class="thread-messages-list">
+              ${(t.messages && t.messages.length > 0 ? t.messages : [
+                { id: 'msg_1', sender: t.customer_name, text: t.query, is_internal_note: false, timestamp: t.created_at }
+              ]).map(m => {
+                const isInternal = m.is_internal_note;
+                const bubbleClass = isInternal ? 'internal' : (m.sender === t.customer_name ? 'customer' : 'agent');
+                const roleBadge = isInternal 
+                  ? '<span style="color: #f59e0b;"><i class="fa-solid fa-lock"></i> Staff Note</span>' 
+                  : (bubbleClass === 'agent' ? '<span style="color: #818cf8;"><i class="fa-solid fa-headset"></i> Agent</span>' : '<span style="color: #38bdf8;"><i class="fa-solid fa-user"></i> Customer</span>');
+                return `
+                  <div class="thread-msg-bubble ${bubbleClass}">
+                    <div class="thread-msg-meta">
+                      <span><strong>${escapeHtml(m.sender)}</strong> (${roleBadge})</span>
+                      <span>${escapeHtml(m.timestamp || '')}</span>
+                    </div>
+                    <div>${escapeHtml(m.text)}</div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+            <div class="thread-input-box">
+              <textarea id="thread-input-${t.id}" class="thread-input-textarea" rows="2" placeholder="Write message to customer or staff note..."></textarea>
+              <div class="thread-controls-row">
+                <label class="thread-internal-toggle">
+                  <input type="checkbox" id="thread-internal-${t.id}">
+                  <span style="color: #f59e0b;"><i class="fa-solid fa-lock"></i> Internal Staff Note</span>
+                </label>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="handleSendThreadMessage('${t.id}')">
+                  <i class="fa-solid fa-reply"></i> Post Message
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     `;
   }).join('');
 }
 
-function filterTicketsList(filter) {
-  AppState.activeTicketFilter = filter;
-  ['all', 'open', 'progress', 'resolved'].forEach(tab => {
-    const btn = document.getElementById(`tab-ticket-${tab}`);
-    if (btn) btn.classList.remove('active');
-  });
+function toggleCopilotDrawer(ticketId) {
+  if (AppState.openCopilotDrawers.has(ticketId)) {
+    AppState.openCopilotDrawers.delete(ticketId);
+  } else {
+    AppState.openCopilotDrawers.add(ticketId);
+  }
+  const drawer = document.getElementById(`copilot-drawer-${ticketId}`);
+  if (drawer) {
+    drawer.style.display = AppState.openCopilotDrawers.has(ticketId) ? 'flex' : 'none';
+  }
+}
 
-  const activeBtn = document.getElementById(`tab-ticket-${filter.toLowerCase().replace(' ', '')}`);
-  if (activeBtn) activeBtn.classList.add('active');
+async function handleGenerateCopilotDraft(ticketId) {
+  const draftEl = document.getElementById(`copilot-draft-${ticketId}`);
+  if (draftEl) {
+    draftEl.value = 'Synthesizing verified policy grounding and drafting response...';
+  }
+  
+  if (AppState.isBackendOnline) {
+    try {
+      const res = await fetch(`${AppState.backendUrl}/api/tickets/${ticketId}/suggest-reply`, {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (draftEl) draftEl.value = data.suggested_reply || '';
+        showToast(`💡 AI Grounded Draft generated (${data.latency_ms || 120}ms)`, 'success');
+        return;
+      }
+    } catch (e) {
+      console.warn('Copilot draft API failed:', e);
+    }
+  }
+  
+  // Local fallback draft generator
+  const t = AppState.tickets.find(x => x.id === ticketId);
+  if (t && draftEl) {
+    const first = t.customer_name ? t.customer_name.split(' ')[0] : 'there';
+    draftEl.value = `Hi ${first},\n\nThank you for contacting OmniDesk Support!\n\nRegarding your inquiry:\n"${t.query}"\n\nBased on our verified store policies, our team has reviewed your case and can confirm that all claims and requests are processed within our official 30-day / 1-year coverage guidelines.\n\nPlease let us know if we can assist you with any additional details.\n\nWarm regards,\nThe OmniDesk Support Team`;
+    showToast('💡 AI Grounded Draft generated (Local fallback)', 'info');
+  }
+}
+
+async function handleSendCopilotDraft(ticketId) {
+  const draftEl = document.getElementById(`copilot-draft-${ticketId}`);
+  const text = draftEl ? draftEl.value.trim() : '';
+  if (!text) {
+    showToast('Please generate or type a reply before sending.', 'warning');
+    return;
+  }
+  
+  await submitTicketMessage(ticketId, 'Alex Morgan (Support Agent)', text, false);
+  if (draftEl) draftEl.value = '';
+  showToast('Reply sent to customer & ticket marked In Progress!', 'success');
+}
+
+function handleLanguageChange(selectedLang) {
+  AppState.selectedLanguage = selectedLang;
+  localStorage.setItem('omni_language', selectedLang);
+  showToast(`Language set to ${selectedLang}`, 'info');
+}
+
+async function handleRateAssistantResponse(btnEl, isPositive, rating, queryText = '') {
+  const container = btnEl.closest('.csat-container');
+  if (container) {
+    const btns = container.querySelectorAll('.csat-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    btnEl.classList.add('active');
+  }
+
+  const payload = {
+    query: queryText,
+    rating: rating,
+    is_positive: isPositive,
+    language: AppState.selectedLanguage
+  };
+
+  if (AppState.isBackendOnline) {
+    try {
+      await fetch(`${AppState.backendUrl}/api/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      console.warn('Feedback sync error:', e);
+    }
+  }
+  showToast(isPositive ? '⭐ Thank you! Positive rating recorded.' : '📝 Feedback logged for quality review.', 'success');
+}
+
+function handleApplyMacroDraft(ticketId, macroId) {
+  const t = AppState.tickets.find(x => x.id === ticketId);
+  const custName = t ? t.customer_name : 'Valued Customer';
+  const agent = t && t.assigned_agent !== 'Unassigned' ? t.assigned_agent : 'OmniDesk Support';
+  
+  const macroTemplates = {
+    'macro_return_rma': `Hi ${custName},\n\nThank you for contacting OmniDesk Support. We have authorized your return request for Ticket #${ticketId} under our 30-Day Policy.\n\nNext Steps:\n1. Affix the prepaid return shipping label to the original packaging.\n2. Drop off at any authorized courier depot within 14 days.\n3. Your full refund will process within 3-5 business days upon arrival.\n\nWarm regards,\n${agent} — OmniDesk Support`,
+    'macro_warranty_claim': `Hi ${custName},\n\nWe have received your warranty inquiry for Ticket #${ticketId}. To process your 1-Year Limited Manufacturer Warranty replacement:\n\n1. Reply with your hardware serial number (on barcode label).\n2. Attach 1-2 clear photos/video of the issue.\n\nOnce received, our warranty desk will expedite your replacement dispatch.\n\nBest regards,\n${agent} — Warranty Desk`,
+    'macro_price_match': `Hi ${custName},\n\nGreat news! We have verified the promotional pricing under our 14-Day Price Match Guarantee for Ticket #${ticketId}.\n\nA price adjustment credit has been applied to your original payment method and will reflect on your statement in 2-3 business days.\n\nThank you for choosing OmniDesk,\n${agent}`,
+    'macro_intl_ddp': `Hi ${custName},\n\nRegarding your international delivery inquiry for Ticket #${ticketId}:\n\nAll international shipments are dispatched via DHL Express under Delivered Duty Paid (DDP) terms. All customs duties, VAT, and brokerage fees were pre-cleared at checkout. No additional fees will be requested upon arrival.\n\nTracking updates are active in your account dashboard.\n\nSafe travels & regards,\n${agent}`
+  };
+
+  const template = macroTemplates[macroId];
+  if (template) {
+    const draftEl = document.getElementById(`copilot-draft-${ticketId}`);
+    if (draftEl) {
+      draftEl.value = template;
+      showToast('⚡ Macro template applied to draft area!', 'success');
+    }
+  }
+}
+
+function handleCopyCopilotDraft(ticketId) {
+  const draftEl = document.getElementById(`copilot-draft-${ticketId}`);
+  if (draftEl && draftEl.value) {
+    navigator.clipboard.writeText(draftEl.value).then(() => {
+      showToast('Draft copied to clipboard!', 'success');
+    }).catch(() => {
+      draftEl.select();
+      showToast('Draft text selected', 'info');
+    });
+  }
+}
+
+async function handleSendThreadMessage(ticketId) {
+  const inputEl = document.getElementById(`thread-input-${ticketId}`);
+  const isInternalEl = document.getElementById(`thread-internal-${ticketId}`);
+  const text = inputEl ? inputEl.value.trim() : '';
+  const isInternal = isInternalEl ? isInternalEl.checked : false;
+  
+  if (!text) {
+    showToast('Message text cannot be empty.', 'warning');
+    return;
+  }
+  
+  await submitTicketMessage(ticketId, isInternal ? 'Staff Note' : 'Support Specialist', text, isInternal);
+  if (inputEl) inputEl.value = '';
+  showToast(isInternal ? 'Internal staff note logged' : 'Message posted to ticket thread', 'success');
+}
+
+async function submitTicketMessage(ticketId, sender, text, isInternal) {
+  const payload = {
+    sender: sender,
+    text: text,
+    is_internal_note: isInternal
+  };
+  
+  if (AppState.isBackendOnline) {
+    try {
+      const res = await fetch(`${AppState.backendUrl}/api/tickets/${ticketId}/messages`, {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        await fetchTicketsFromBackend();
+        return;
+      }
+    } catch (e) {
+      console.warn('Post message API error:', e);
+    }
+  }
+  
+  // Local fallback
+  const t = AppState.tickets.find(x => x.id === ticketId);
+  if (t) {
+    if (!t.messages) t.messages = [];
+    t.messages.push({
+      id: `msg_${t.messages.length + 1}`,
+      sender: sender,
+      text: text,
+      is_internal_note: isInternal,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+    if (!isInternal && t.status === 'Open') {
+      t.status = 'In Progress';
+    }
+    renderTicketsList();
+  }
+}
+
+function handleSearchTickets() {
+  const input = document.getElementById('tickets-search-input');
+  renderTicketsList(input ? input.value : '');
+}
+
+async function handleClaimTicket(ticketId) {
+  // Claim assigns Alex Morgan (Tier 2 Lead) and sets status to In Progress
+  await handleAssignTicketAgent(ticketId, 'Alex Morgan', 'In Progress');
+}
+
+async function handleAssignTicketAgent(ticketId, agentName, targetStatus = null) {
+  const payload = {
+    assigned_agent: agentName
+  };
+  if (targetStatus) {
+    payload.status = targetStatus;
+  } else if (agentName !== 'Unassigned') {
+    // If transitioning from unassigned to a specific agent, automatically mark In Progress
+    const curr = AppState.tickets.find(x => x.id === ticketId);
+    if (curr && curr.status === 'Open') {
+      payload.status = 'In Progress';
+    }
+  }
+
+  if (AppState.isBackendOnline) {
+    try {
+      const res = await fetch(`${AppState.backendUrl}/api/tickets/${ticketId}`, {
+        method: 'PATCH',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        showToast(`Ticket ${ticketId} assigned to ${agentName}`, 'success');
+        await fetchTicketsFromBackend();
+        return;
+      }
+    } catch (e) {
+      console.warn('Assign agent error:', e);
+    }
+  }
+
+  const t = AppState.tickets.find(x => x.id === ticketId);
+  if (t) {
+    t.assigned_agent = agentName;
+    if (payload.status) t.status = payload.status;
+    renderTicketsList();
+    showToast(`Ticket ${ticketId} assigned to ${agentName}`, 'info');
+  }
+}
+
+function filterTicketsList(filter = null) {
+  if (filter) {
+    AppState.activeTicketFilter = filter;
+    ['all', 'open', 'progress', 'resolved'].forEach(tab => {
+      const btn = document.getElementById(`tab-ticket-${tab}`);
+      if (btn) btn.classList.remove('active');
+    });
+
+    const activeBtn = document.getElementById(`tab-ticket-${filter.toLowerCase().replace(' ', '')}`);
+    if (activeBtn) activeBtn.classList.add('active');
+  }
   renderTicketsList();
+}
+
+function exportTicketsData(format = 'csv') {
+  if (AppState.isBackendOnline) {
+    const url = `${AppState.backendUrl}/api/tickets/export?format=${format}`;
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", url);
+    downloadAnchor.setAttribute("download", `omnidesk_tickets_export.${format}`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    showToast(`Exporting tickets as ${format.toUpperCase()}...`, 'success');
+    return;
+  }
+
+  // Local fallback export
+  if (format === 'json') {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(AppState.tickets, null, 2));
+    const a = document.createElement('a');
+    a.setAttribute("href", dataStr);
+    a.setAttribute("download", "omnidesk_tickets_export.json");
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } else {
+    let csv = "Ticket ID,Customer ID,Customer Name,Customer Email,Customer Tier,Priority,Status,Intent,Sentiment,Assigned Agent,Created At,Subject,Query Context\n";
+    AppState.tickets.forEach(t => {
+      csv += `"${t.id}","${t.customer_id || ''}","${t.customer_name || ''}","${t.customer_email || ''}","${t.customer_tier || ''}","${t.priority || ''}","${t.status || ''}","${t.intent || 'General Inquiry'}","${t.sentiment || 'Standard'}","${t.assigned_agent || 'Unassigned'}","${t.created_at || ''}","${(t.subject || '').replace(/"/g, '""')}","${(t.query || '').replace(/"/g, '""')}"\n`;
+    });
+    const dataStr = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    const a = document.createElement('a');
+    a.setAttribute("href", dataStr);
+    a.setAttribute("download", "omnidesk_tickets_export.csv");
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  showToast(`Exported ${AppState.tickets.length} tickets as ${format.toUpperCase()}!`, 'success');
 }
 
 function openCreateTicketModal(queryText = '') {
@@ -921,14 +1398,19 @@ async function handleCreateTicketSubmit(e) {
 
   if (!name || !email || !subject || !details) return;
 
+  const custId = `CUST-${Math.floor(1000 + Math.random() * 9000)}`;
+  const tier = priority === 'Urgent' ? 'VIP Enterprise' : (priority === 'High' ? 'Pro Business' : 'Standard Retail');
+
   if (AppState.isBackendOnline) {
     try {
       const res = await fetch(`${AppState.backendUrl}/api/tickets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          customer_id: custId,
           customer_name: name,
           customer_email: email,
+          customer_tier: tier,
           priority: priority,
           subject: subject,
           query: details,
@@ -953,8 +1435,10 @@ async function handleCreateTicketSubmit(e) {
   // Local fallback ticket
   const localTicket = {
     id: `TCK-${Math.floor(1000 + Math.random() * 9000)}`,
+    customer_id: custId,
     customer_name: name,
     customer_email: email,
+    customer_tier: tier,
     subject: subject,
     query: details,
     priority: priority,
@@ -1270,12 +1754,150 @@ function formatMarkdownText(text) {
   return html;
 }
 
+// Phase 7: Synthetic Benchmark Runner
+async function handleRunSyntheticBenchmark() {
+  const btn = document.getElementById('btn-run-benchmark');
+  const resultsContainer = document.getElementById('bench-results-container');
+  const tbody = document.getElementById('bench-results-tbody');
+  
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Executing Benchmark...';
+  }
+  showToast('Running autonomous synthetic benchmark battery (8 scenarios)...', 'info');
+
+  try {
+    const res = await fetch(`${AppState.backendUrl}/api/benchmark/simulate`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ num_queries: 8 })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      
+      // Update KPI metrics
+      const qpsEl = document.getElementById('bench-qps');
+      const p50El = document.getElementById('bench-p50');
+      const precEl = document.getElementById('bench-precision');
+      const intentEl = document.getElementById('bench-intent-acc');
+      
+      if (qpsEl) qpsEl.textContent = `${data.qps} QPS`;
+      if (p50El) p50El.textContent = `${data.latency_p50_ms}ms`;
+      if (precEl) precEl.textContent = `${data.guardrail_accuracy_percent}%`;
+      if (intentEl) intentEl.textContent = `${data.intent_accuracy_percent}%`;
+
+      // Render table rows
+      if (tbody && data.detailed_results) {
+        tbody.innerHTML = data.detailed_results.map(r => `
+          <tr>
+            <td style="font-weight: 500;">${escapeHtml(r.query)}</td>
+            <td><span class="lang-badge">🌐 ${escapeHtml(r.language)}</span></td>
+            <td><span class="intent-pill">${escapeHtml(r.intent)}</span></td>
+            <td>⚡ ${r.latency_ms}ms</td>
+            <td>${r.deflected ? '<span class="badge badge-amber">Deflected</span>' : '<span class="badge badge-emerald">Grounded</span>'}</td>
+            <td>${r.deflection_accurate ? '✅ Accurate' : '⚠️ Review'}</td>
+          </tr>
+        `).join('');
+      }
+
+      if (resultsContainer) {
+        resultsContainer.style.display = 'block';
+      }
+      showToast(`Benchmark completed! ${data.qps} QPS | P50: ${data.latency_p50_ms}ms | Precision: ${data.guardrail_accuracy_percent}%`, 'success');
+    } else {
+      showToast('Benchmark run error: ' + res.statusText, 'error');
+    }
+  } catch (err) {
+    console.error('Benchmark error:', err);
+    showToast('Failed to connect to backend for benchmark', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-play"></i> Run Synthetic Benchmark';
+    }
+  }
+}
+
+// Phase 7: Webhook Dispatcher
+async function handleTriggerTestWebhook() {
+  const btn = document.getElementById('btn-test-webhook');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Dispatching...';
+  }
+
+  try {
+    const res = await fetch(`${AppState.backendUrl}/api/webhooks/test`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        event_type: "sla_alert_test",
+        channel: "Slack #support-alerts",
+        message: "Simulated high-priority incident alert from OmniDesk AI Support Hub."
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      showToast('Webhook alert dispatched to Slack #support-alerts!', 'success');
+      fetchWebhookLogsFromBackend();
+    } else {
+      showToast('Webhook dispatch failed', 'error');
+    }
+  } catch (err) {
+    console.error('Webhook error:', err);
+    showToast('Failed to dispatch webhook', 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Test Alert Webhook';
+    }
+  }
+}
+
+async function fetchWebhookLogsFromBackend() {
+  try {
+    const res = await fetch(`${AppState.backendUrl}/api/webhooks/logs`);
+    if (res.ok) {
+      const data = await res.json();
+      renderWebhookLogs(data.logs || []);
+    }
+  } catch (err) {
+    console.error('Failed to fetch webhook logs:', err);
+  }
+}
+
+function renderWebhookLogs(logs) {
+  const container = document.getElementById('webhook-logs-container');
+  if (!container) return;
+  
+  if (!logs || logs.length === 0) {
+    container.innerHTML = '<div class="text-dim text-xs py-2">No webhook incidents dispatched in current session.</div>';
+    return;
+  }
+
+  container.innerHTML = logs.slice(0, 5).map(log => `
+    <div class="webhook-log-item">
+      <div>
+        <div class="webhook-log-title">
+          <span>${escapeHtml(log.title)}</span>
+          <span class="badge ${log.severity === 'high' ? 'badge-rose' : 'badge-cyan'}" style="font-size: 0.68rem; padding: 2px 6px;">${escapeHtml(log.severity).toUpperCase()}</span>
+        </div>
+        <div class="webhook-log-dest">Destination: <code>${escapeHtml(log.destination)}</code> &bull; Status: <span class="text-emerald font-semibold">${escapeHtml(log.status)}</span></div>
+      </div>
+      <div class="text-xs text-muted">⏱️ ${escapeHtml(log.timestamp)}</div>
+    </div>
+  `).join('');
+}
+
 // Initialize on DOM Ready
 document.addEventListener('DOMContentLoaded', () => {
   populateSettingsView();
   checkBackendHealth().then(() => {
     fetchKbChunksFromBackend();
     fetchTicketsFromBackend();
+    fetchWebhookLogsFromBackend();
   });
   renderKbChunks();
   renderTicketsList();
