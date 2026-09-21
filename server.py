@@ -26,6 +26,9 @@ from rag_engine import (
     get_pipeline_settings,
     update_pipeline_settings,
     run_synthetic_benchmark,
+    bm25_search,
+    hybrid_search_rag,
+    analyze_claim_image,
     collection,
     DEFAULT_KB_PATH,
     get_gemini_api_key
@@ -999,6 +1002,38 @@ def get_analytics():
         "recent_webhooks": WEBHOOK_LOGS_DB[:5],
         "audit_logs": AUDIT_LOGS[:10]
     }
+
+# ==============================================================================
+# PHASE 8: HYBRID SEARCH & MULTI-MODAL VISION ENDPOINTS
+# ==============================================================================
+
+class HybridSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000, description="Search query string")
+    top_k: Optional[int] = Field(3, ge=1, le=20)
+    rrf_k: Optional[int] = Field(60, ge=1, le=200)
+
+class VisionClaimRequest(BaseModel):
+    image_base64: Optional[str] = Field("", description="Base64-encoded image string")
+    claim_description: str = Field(..., min_length=1, max_length=2000, description="Customer claim explanation")
+    mime_type: Optional[str] = Field("image/jpeg", max_length=50)
+
+@app.post("/api/search/hybrid", dependencies=[Depends(check_rate_limit)])
+def hybrid_search(req: HybridSearchRequest):
+    try:
+        return hybrid_search_rag(query=req.query.strip(), top_k=req.top_k, rrf_k=req.rrf_k)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/vision/analyze-claim", dependencies=[Depends(check_rate_limit)])
+def analyze_claim(req: VisionClaimRequest):
+    try:
+        return analyze_claim_image(
+            image_base64=req.image_base64 or "",
+            claim_description=req.claim_description.strip(),
+            mime_type=req.mime_type or "image/jpeg"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 def read_root():

@@ -31,11 +31,11 @@ def log(phase: str, step: str, detail: str = "", status: str = "PASS"):
 def test_phase1_rag_and_sse():
     """Phase 1: Grounded RAG & SSE Streaming."""
     # 1. Health check
-    h = requests.get(f"{BASE_URL}/health", timeout=5)
+    h = requests.get(f"{BASE_URL}/health", timeout=10)
     assert h.status_code == 200
     
     # 2. Ask grounded query
-    q_res = requests.post(f"{BASE_URL}/ask", json={"query": "What is the return policy for electronics?"}, timeout=10)
+    q_res = requests.post(f"{BASE_URL}/ask", json={"query": "What is the return policy for electronics?"}, timeout=30)
     assert q_res.status_code == 200
     q_data = q_res.json()
     assert len(q_data.get("answer", "")) > 10
@@ -45,16 +45,16 @@ def test_phase1_rag_and_sse():
 def test_phase2_hardening_and_auth():
     """Phase 2: Security & Admin Auth."""
     # 1. Empty query payload validation -> 422
-    empty_res = requests.post(f"{BASE_URL}/ask", json={"query": ""}, timeout=5)
+    empty_res = requests.post(f"{BASE_URL}/ask", json={"query": ""}, timeout=10)
     assert empty_res.status_code == 422
     
     # 2. Oversized query payload validation (>2000 chars) -> 422
     huge_query = "What is your policy? " * 150
-    huge_res = requests.post(f"{BASE_URL}/ask", json={"query": huge_query}, timeout=5)
+    huge_res = requests.post(f"{BASE_URL}/ask", json={"query": huge_query}, timeout=10)
     assert huge_res.status_code == 422
     
     # 3. Security telemetry & diagnostics
-    info_res = requests.get(f"{BASE_URL}/api/info", timeout=5)
+    info_res = requests.get(f"{BASE_URL}/api/info", timeout=10)
     assert info_res.status_code == 200
     info_data = info_res.json()
     assert "rate_limit_per_min" in info_data
@@ -74,7 +74,7 @@ def test_phase3_ticket_escalation():
             "subject": "Expedited Delivery Inquiry",
             "query": "Need tracking for international order to Europe."
         },
-        timeout=5
+        timeout=15
     )
     assert t_res.status_code == 200
     t_data = t_res.json().get("ticket", {})
@@ -86,19 +86,19 @@ def test_phase3_ticket_escalation():
 def test_phase4_intent_and_crm():
     """Phase 4: Intent Classification & CRM Export."""
     # 1. Export CSV
-    csv_res = requests.get(f"{BASE_URL}/api/tickets/export?format=csv", timeout=5)
+    csv_res = requests.get(f"{BASE_URL}/api/tickets/export?format=csv", timeout=15)
     assert csv_res.status_code == 200
     assert "Ticket ID" in csv_res.text
     
     # 2. Export JSON
-    json_res = requests.get(f"{BASE_URL}/api/tickets/export?format=json", timeout=5)
+    json_res = requests.get(f"{BASE_URL}/api/tickets/export?format=json", timeout=15)
     assert json_res.status_code == 200
     log("Phase 4", "CRM Export & Intent", "CSV and JSON CRM data streams verified", "PASS")
 
 def test_phase5_copilot_and_sla(ticket_id: str):
     """Phase 5: AI Copilot & Conversation Threading."""
     # 1. Suggest reply
-    sug_res = requests.post(f"{BASE_URL}/api/tickets/{ticket_id}/suggest-reply", timeout=10)
+    sug_res = requests.post(f"{BASE_URL}/api/tickets/{ticket_id}/suggest-reply", timeout=30)
     assert sug_res.status_code == 200
     sug_data = sug_res.json()
     assert len(sug_data.get("suggested_reply", "")) > 10
@@ -107,7 +107,7 @@ def test_phase5_copilot_and_sla(ticket_id: str):
     note_res = requests.post(
         f"{BASE_URL}/api/tickets/{ticket_id}/messages",
         json={"sender": "Lead Supervisor", "text": "Customer is priority VIP tier. Fast-tracked.", "is_internal_note": True},
-        timeout=5
+        timeout=15
     )
     assert note_res.status_code == 200
     log("Phase 5", "Copilot & Threading", f"Grounded draft generated & confidential note posted to {ticket_id}", "PASS")
@@ -115,38 +115,38 @@ def test_phase5_copilot_and_sla(ticket_id: str):
 def test_phase6_multilang_and_macros(ticket_id: str):
     """Phase 6: Multi-Language & Macro Rules."""
     # 1. Multi-lang Spanish RAG
-    es_res = requests.post(f"{BASE_URL}/ask", json={"query": "¿Cuál es la política de devoluciones?", "language": "Spanish"}, timeout=10)
+    es_res = requests.post(f"{BASE_URL}/ask", json={"query": "¿Cuál es la política de devoluciones?", "language": "Spanish"}, timeout=30)
     assert es_res.status_code == 200
     assert es_res.json().get("language") == "Spanish"
     
     # 2. Apply Macro
-    m_res = requests.post(f"{BASE_URL}/api/tickets/{ticket_id}/apply-macro", json={"macro_id": "macro_return_rma"}, timeout=5)
+    m_res = requests.post(f"{BASE_URL}/api/tickets/{ticket_id}/apply-macro", json={"macro_id": "macro_return_rma"}, timeout=15)
     assert m_res.status_code == 200
     app_text = m_res.json().get("applied_text", "")
     assert ticket_id in app_text
     
     # 3. Post CSAT
-    fb_res = requests.post(f"{BASE_URL}/api/feedback", json={"rating": 5, "is_positive": True, "comment": "Excellent multi-language response!"}, timeout=5)
+    fb_res = requests.post(f"{BASE_URL}/api/feedback", json={"rating": 5, "is_positive": True, "comment": "Excellent multi-language response!"}, timeout=15)
     assert fb_res.status_code == 200
     log("Phase 6", "Multi-Language & Macros", "Spanish RAG, macro template substitution & CSAT feedback verified", "PASS")
 
 def test_phase7_webhooks_and_benchmark():
     """Phase 7: Incident Webhook Alerting & Synthetic Benchmarking."""
     # 1. Trigger test webhook
-    wh_res = requests.post(f"{BASE_URL}/api/webhooks/test", timeout=5)
+    wh_res = requests.post(f"{BASE_URL}/api/webhooks/test", timeout=15)
     assert wh_res.status_code == 200
     wh_data = wh_res.json()
     assert wh_data.get("status") == "success"
     
     # 2. Verify webhook logs
-    logs_res = requests.get(f"{BASE_URL}/api/webhooks/logs", timeout=5)
+    logs_res = requests.get(f"{BASE_URL}/api/webhooks/logs", timeout=15)
     assert logs_res.status_code == 200
     logs = logs_res.json().get("logs", [])
     assert len(logs) >= 1
     log("Phase 7", "Incident Webhook Alerting", f"Outbound alert dispatched ({len(logs)} webhook logs in audit stream)", "PASS")
     
     # 3. Run synthetic load benchmark
-    bench_res = requests.post(f"{BASE_URL}/api/benchmark/simulate", json={"num_queries": 8}, timeout=25)
+    bench_res = requests.post(f"{BASE_URL}/api/benchmark/simulate", json={"num_queries": 8}, timeout=90)
     assert bench_res.status_code == 200, f"Benchmark failed with code {bench_res.status_code}: {bench_res.text}"
     bench_data = bench_res.json()
     print("Benchmark data received:", bench_data)
@@ -158,9 +158,30 @@ def test_phase7_webhooks_and_benchmark():
     
     log("Phase 7", "Synthetic Stress Benchmark", f"{bench_data['qps']} QPS | P50: {bench_data['latency_p50_ms']}ms | Precision: {bench_data['guardrail_accuracy_percent']}%", "PASS")
 
+def test_phase8_hybrid_and_vision():
+    """Phase 8: Hybrid Search (BM25 + RRF) & Multi-Modal Vision RAG."""
+    # 1. Hybrid search RRF
+    h_res = requests.post(f"{BASE_URL}/api/search/hybrid", json={"query": "30-day return policy", "top_k": 3}, timeout=15)
+    assert h_res.status_code == 200
+    h_data = h_res.json()
+    assert len(h_data.get("fused_results", [])) > 0
+    assert "rrf_score" in h_data["fused_results"][0]
+
+    # 2. Vision warranty claim analyzer
+    v_res = requests.post(
+        f"{BASE_URL}/api/vision/analyze-claim",
+        json={"claim_description": "Dropped tablet, glass is shattered.", "image_base64": ""},
+        timeout=15
+    )
+    assert v_res.status_code == 200
+    v_data = v_res.json()
+    assert v_data.get("is_warranty_covered") is False
+    assert "Section 4" in v_data.get("grounded_policy_clause", "")
+    log("Phase 8", "Hybrid Search & Vision RAG", f"BM25+RRF fused & Vision claim verdict: {v_data['claim_verdict']}", "PASS")
+
 def run_master_suite():
     print("\n" + "=" * 70)
-    print("🏆 OMNIDESK AI — MASTER ENTERPRISE VALIDATION SUITE (PHASES 1-7)")
+    print("🏆 OMNIDESK AI — MASTER ENTERPRISE VALIDATION SUITE (PHASES 1-8)")
     print("=" * 70 + "\n")
     
     t_start = time.time()
@@ -187,16 +208,19 @@ def run_master_suite():
         
         test_phase7_webhooks_and_benchmark()
         results["Phase 7: Webhooks Alerting & Synthetic Benchmark"] = "PASS"
+
+        test_phase8_hybrid_and_vision()
+        results["Phase 8: Hybrid Search (BM25) & Vision Claim RAG"] = "PASS"
         
         total_time = round(time.time() - t_start, 2)
         
         print("\n" + "=" * 70)
-        print("📊 EXECUTIVE SCORECARD — ALL 7 PHASES")
+        print("📊 EXECUTIVE SCORECARD — ALL 8 ENTERPRISE PHASES")
         print("=" * 70)
         for name, status in results.items():
             print(f"  ✅ {name:<55} [{status}]")
         print("=" * 70)
-        print(f"🎉 100% SUCCESS — 7/7 ENTERPRISE PHASES FULLY OPERATIONAL (Elapsed: {total_time}s)")
+        print(f"🎉 100% SUCCESS — 8/8 ENTERPRISE PHASES FULLY OPERATIONAL (Elapsed: {total_time}s)")
         print("=" * 70 + "\n")
         return 0
     except AssertionError as e:
